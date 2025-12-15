@@ -1,13 +1,25 @@
-// Enhanced Express + Socket.IO server for chat with user management
+// Enhanced Express + Socket.IO server for chat with user management (Production Ready)
+
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 
 const app = express();
-app.use(cors());
+
+// Allow frontend connections (Vercel / any client)
+app.use(cors({
+  origin: [
+    'https://chat-application-6s01.onrender.com', // backend itself
+    'https://chat-application.vercel.app',        // example frontend (replace if needed)
+    '*'
+  ],
+  methods: ['GET', 'POST']
+}));
 
 const server = http.createServer(app);
+
+// Socket.IO with proper CORS
 const io = new Server(server, {
   cors: {
     origin: '*',
@@ -17,120 +29,112 @@ const io = new Server(server, {
 
 // Store connected users
 const connectedUsers = new Map(); // socketId -> username
-const usernames = new Set(); // Track taken usernames
+const usernames = new Set();      // Track taken usernames
 
 // Helper function to get all connected usernames
 function getConnectedUsernames() {
   return Array.from(connectedUsers.values()).sort();
 }
 
+// Socket connection
 io.on('connection', (socket) => {
-  console.log('A user connected:', socket.id);
-  
-  // Handle user joining chat
+  console.log('User connected:', socket.id);
+
+  // User joins chat
   socket.on('join chat', (username) => {
-    // Validate username
+
     if (!username || username.trim().length < 2) {
       socket.emit('join error', 'Username must be at least 2 characters long');
       return;
     }
-    
+
     if (username.trim().length > 20) {
       socket.emit('join error', 'Username must be less than 20 characters');
       return;
     }
-    
+
     const cleanUsername = username.trim();
-    
-    // Check if username is already taken
+
     if (usernames.has(cleanUsername.toLowerCase())) {
-      socket.emit('join error', 'Username is already taken. Please choose another one.');
+      socket.emit('join error', 'Username already taken');
       return;
     }
-    
-    // Add user to connected users
+
     connectedUsers.set(socket.id, cleanUsername);
     usernames.add(cleanUsername.toLowerCase());
-    
-    // Send success response to the joining user
+
     socket.emit('join success', {
       username: cleanUsername,
       users: getConnectedUsernames()
     });
-    
-    // Notify all other users that someone joined
+
     socket.broadcast.emit('user joined', {
       username: cleanUsername,
       users: getConnectedUsernames()
     });
-    
-    console.log(`${cleanUsername} joined the chat`);
+
+    console.log(`${cleanUsername} joined`);
   });
-  
-  // Handle user leaving chat
-  socket.on('leave chat', () => {
-    handleUserDisconnect(socket);
-  });
-  
-  // Handle chat messages
+
+  // Message handling
   socket.on('chat message', (messageData) => {
     const username = connectedUsers.get(socket.id);
-    
+
     if (!username) {
-      socket.emit('join error', 'You must join the chat first');
+      socket.emit('join error', 'Join chat first');
       return;
     }
-    
-    const completeMessageData = {
+
+    const message = {
       text: messageData.text,
-      username: username,
+      username,
       timestamp: messageData.timestamp || new Date().toISOString(),
       socketId: socket.id
     };
-    
-    // Broadcast message to all connected users
-    io.emit('chat message', completeMessageData);
-    console.log(`${username}: ${messageData.text}`);
+
+    io.emit('chat message', message);
+    console.log(`${username}: ${message.text}`);
   });
-  
-  // Handle user disconnect
+
+  // Leave chat
+  socket.on('leave chat', () => {
+    handleDisconnect(socket);
+  });
+
+  // Disconnect
   socket.on('disconnect', () => {
-    handleUserDisconnect(socket);
+    handleDisconnect(socket);
   });
-  
-  // Helper function to handle user disconnect
-  function handleUserDisconnect(socket) {
+
+  function handleDisconnect(socket) {
     const username = connectedUsers.get(socket.id);
-    
+
     if (username) {
-      // Remove user from tracking
       connectedUsers.delete(socket.id);
       usernames.delete(username.toLowerCase());
-      
-      // Notify all users that someone left
+
       socket.broadcast.emit('user left', {
-        username: username,
+        username,
         users: getConnectedUsernames()
       });
-      
-      console.log(`${username} left the chat`);
-    } else {
-      console.log('User disconnected:', socket.id);
+
+      console.log(`${username} left`);
     }
   }
 });
 
+// Root route (Render health check)
 app.get('/', (req, res) => {
   res.send(`
-    <h1>Chat Server Status</h1>
-    <p>Server is running successfully!</p>
-    <p>Connected users: ${connectedUsers.size}</p>
-    <p>Active usernames: ${getConnectedUsernames().join(', ') || 'None'}</p>
-    <p>Frontend: <a href="http://localhost:5174">http://localhost:5174</a></p>
+    <h1>Chat Server Running</h1>
+    <p>Status: Online</p>
+    <p>Connected Users: ${connectedUsers.size}</p>
+    <p>Users: ${getConnectedUsernames().join(', ') || 'None'}</p>
+    <p>Backend URL: https://chat-application-6s01.onrender.com</p>
   `);
 });
 
-// API endpoint to get server stats (useful for deployment monitoring)
+// Stats API
 app.get('/api/stats', (req, res) => {
   res.json({
     connectedUsers: connectedUsers.size,
@@ -140,8 +144,9 @@ app.get('/api/stats', (req, res) => {
   });
 });
 
+// Start server
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
-  console.log(`Chat server listening on port ${PORT}`);
-  console.log(`Frontend should connect to: http://localhost:${PORT}`);
+  console.log(`Chat server running on port ${PORT}`);
+  console.log(`Backend URL: https://chat-application-6s01.onrender.com`);
 });
